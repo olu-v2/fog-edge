@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import SensorCard from "./components/SensorCard.jsx";
-import TimeRangeSelector from "./components/TImeRangeSelector.js";
+import TimeRangeSelector from "./components/TImeRangeSelector.jsx";
 import { connectWS } from "./ws.js";
 
 const SENSOR_TYPES = [

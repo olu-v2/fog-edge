@@ -6,7 +6,6 @@ import {
   CreateBucketCommand,
   HeadBucketCommand,
   PutBucketWebsiteCommand,
-  PutBucketPolicyCommand,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import {
@@ -68,27 +67,6 @@ async function enableStaticHosting() {
   console.log("Static website hosting enabled.");
 }
 
-async function setPublicPolicy() {
-  await s3.send(
-    new PutBucketPolicyCommand({
-      Bucket: BUCKET,
-      Policy: JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Sid: "PublicReadGetObject",
-            Effect: "Allow",
-            Principal: "*",
-            Action: "s3:GetObject",
-            Resource: `arn:aws:s3:::${BUCKET}/*`,
-          },
-        ],
-      }),
-    }),
-  );
-  console.log("Public read policy applied.");
-}
-
 async function uploadDashboard(apiUrl) {
   const dashboardDir = path.resolve("backend/dashboard");
   const files = fs.readdirSync(dashboardDir);
@@ -133,7 +111,6 @@ async function main() {
   const API_URL = await getQueryApiUrl();
   await ensureBucket();
   await enableStaticHosting();
-  await setPublicPolicy();
   await uploadDashboard(API_URL);
 
   const dashboardUrl = `http://${BUCKET}.s3-website-${REGION}.amazonaws.com`;

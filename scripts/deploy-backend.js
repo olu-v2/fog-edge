@@ -6,6 +6,7 @@ import {
   UpdateFunctionCodeCommand,
   UpdateFunctionConfigurationCommand,
   AddPermissionCommand,
+  waitUntilFunctionUpdated,
 } from "@aws-sdk/client-lambda";
 import {
   ApiGatewayV2Client,
@@ -120,11 +121,20 @@ async function deployLambda({ functionName, zipPath, handler, envVars }) {
           ZipFile: zipFile,
         }),
       );
+      console.log(`Waiting for ${functionName} to finish updating...`);
+      await waitUntilFunctionUpdated(
+        { client: lambdaClient, maxWaitTime: 60 },
+        { FunctionName: functionName },
+      );
       await lambdaClient.send(
         new UpdateFunctionConfigurationCommand({
           FunctionName: functionName,
           Environment: { Variables: envVars },
         }),
+      );
+      await waitUntilFunctionUpdated(
+        { client: lambdaClient, maxWaitTime: 60 },
+        { FunctionName: functionName },
       );
       console.log(`Lambda code + config updated: ${functionName}`);
     } else {

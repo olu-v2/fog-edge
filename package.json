@@ -4,8 +4,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "fog": "nodemon fog/fog_node.js",
-    "sensors": "nodemon sensors/run_sensors.js"
+    "fog": "node fog/fogNode.js",
+    "sensors": "node sensors/runSensors.js"
   },
   "repository": "https://github.com/olu-v2/fog-edge.git",
   "author": "Olumide Akinkunmi <mide.akinkunmi@gmail.com>",

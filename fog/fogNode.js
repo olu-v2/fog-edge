@@ -1,14 +1,15 @@
-import aedes from "aedes";
+import { Aedes } from "aedes";
 import net from "net";
 import mqtt from "mqtt";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 
 // ── Config ──────────────────────────────────────────────
+const broker = await Aedes.createBroker();
 const BROKER_PORT = 1883;
 const DISPATCH_RATE = 5000; // ms
 const AWS_REGION = "us-east-1";
 const SQS_QUEUE_URL =
-  "https://sqs.us-east-1.amazonaws.com/<ACCOUNT_ID>/sensor-ingest-queue";
+  "https://sqs.us-east-1.amazonaws.com/320803145537/sensor-ingest-queue";
 const TOPIC = "fog/ingest";
 // ────────────────────────────────────────────────────────
 
@@ -109,7 +110,6 @@ const dispatchToCloud = async () => {
 };
 
 // ── Embedded MQTT Broker (aedes) ─────────────────────────
-const broker = aedes();
 const server = net.createServer(broker.handle);
 
 server.listen(BROKER_PORT, () => {

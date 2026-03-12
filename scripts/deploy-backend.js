@@ -7,6 +7,8 @@ import {
   UpdateFunctionConfigurationCommand,
   AddPermissionCommand,
   waitUntilFunctionUpdated,
+  CreateEventSourceMappingCommand,
+  ListEventSourceMappingsCommand,
 } from "@aws-sdk/client-lambda";
 import {
   ApiGatewayV2Client,
@@ -254,6 +256,36 @@ async function ensureApiGateway({ apiName, functionName }) {
   return api.ApiEndpoint;
 }
 
+// ─── SQS → Lambda Event Source Mapping ──────────────────
+async function ensureSQSEventMapping(functionName, queueUrl) {
+  const queueArn = queueUrl
+    .replace("https://sqs.", "arn:aws:sqs:")
+    .replace(".amazonaws.com/", ":")
+    .replace("/", ":");
+
+  const existing = await lambdaClient.send(
+    new ListEventSourceMappingsCommand({
+      FunctionName: functionName,
+      EventSourceArn: queueArn,
+    }),
+  );
+
+  if (existing.EventSourceMappings?.length > 0) {
+    console.log(`SQS trigger already exists for ${functionName}`);
+    return;
+  }
+
+  await lambdaClient.send(
+    new CreateEventSourceMappingCommand({
+      FunctionName: functionName,
+      EventSourceArn: queueArn,
+      BatchSize: 10,
+      Enabled: true,
+    }),
+  );
+  console.log(`SQS trigger created: ${queueArn} → ${functionName}`);
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -267,6 +299,7 @@ async function main() {
     handler: "ingest.handler",
     envVars: { TABLE_NAME, SQS_QUEUE_URL: sqsQueueUrl },
   });
+  await ensureSQSEventMapping(ingestName, sqsQueueUrl);
   const ingestUrl = await ensureApiGateway({
     apiName: `fogstream-ingest-api-${PR_ID}`,
     functionName: ingestName,

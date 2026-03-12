@@ -368,6 +368,35 @@ async function ensureWebSocketApi(functionName) {
     );
   }
 
+  const wsApiArn = `arn:aws:execute-api:${REGION}:${ACCOUNT_ID}:${api.ApiId}/*/*`;
+
+  const permissions = [
+    {
+      Action: "lambda:InvokeFunction",
+      Principal: "apigateway.amazonaws.com",
+      StatementId: "WSApiGatewayInvoke",
+      SourceArn: wsApiArn,
+    },
+  ];
+
+  for (const perm of permissions) {
+    try {
+      await lambdaClient.send(
+        new AddPermissionCommand({
+          FunctionName: functionName,
+          ...perm,
+        }),
+      );
+      console.log(`WS invoke permission added: ${perm.StatementId}`);
+    } catch (err) {
+      if (err.name === "ResourceConflictException") {
+        console.log(`WS invoke permission already exists: ${perm.StatementId}`);
+      } else {
+        throw err;
+      }
+    }
+  }
+
   // WebSocket URL format is wss:// not https://
   return `wss://${api.ApiId}.execute-api.${REGION}.amazonaws.com/prod`;
 }

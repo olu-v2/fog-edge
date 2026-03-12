@@ -1,22 +1,18 @@
 const RANGES = [
-  { label: "1 Hour", value: 3600 },
-  { label: "6 Hours", value: 21600 },
-  { label: "24 Hours", value: 86400 },
-  { label: "7 Days", value: 604800 },
+  { label: "1h", value: 3600 },
+  { label: "6h", value: 21600 },
+  { label: "24h", value: 86400 },
+  { label: "7d", value: 604800 },
 ];
 
 export default function TimeRangeSelector({ value, onChange }) {
   return (
-    <div className="flex gap-2">
+    <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700">
       {RANGES.map((r) => (
         <button
           key={r.value}
           onClick={() => onChange(r.value)}
-          className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
-            value === r.value
-              ? "bg-sky-500 text-white"
-              : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-          }`}
+          className={`btn ${value === r.value ? "btn-active" : "btn-inactive"}`}
         >
           {r.label}
         </button>

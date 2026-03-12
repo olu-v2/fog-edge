@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import {
   LineChart,
   Line,
@@ -7,10 +7,10 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Dot,
 } from "recharts";
 import { onMessage, offMessage } from "../ws.js";
 import AnomalyBadge from "./AnomalyBadge.jsx";
+import StatusPill from "./StatusPill.jsx";
 
 const UNITS = {
   temperature: "°C",
@@ -20,21 +20,44 @@ const UNITS = {
   vibration: "m/s²",
 };
 
+const ICONS = {
+  temperature: "🌡",
+  humidity: "💧",
+  pressure: "🔵",
+  co2: "🌿",
+  vibration: "📳",
+};
+
 const API_BASE = import.meta.env.VITE_API_URL;
 
-// Custom dot — red for anomalies, normal otherwise
-function AnomalyDot(props) {
-  const { cx, cy, payload } = props;
+function AnomalyDot({ cx, cy, payload }) {
   if (!payload?.anomaly) return null;
   return (
     <circle
       cx={cx}
       cy={cy}
       r={5}
-      fill="#ef4444"
-      stroke="#fff"
-      strokeWidth={1.5}
+      className="fill-red-500 stroke-white stroke-2"
     />
+  );
+}
+
+function CustomTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div className="bg-slate-800 border border-slate-600 rounded-lg p-3 text-xs shadow-xl">
+      <p className="text-slate-400 mb-1">{label}</p>
+      <p className="text-brand-400 font-semibold">
+        Mean: {d.mean} {UNITS[d.stype]}
+      </p>
+      <p className="text-slate-400">
+        Min: {d.min} · Max: {d.max}
+      </p>
+      {d.anomaly && (
+        <p className="text-red-400 font-semibold mt-1">⚠ Anomaly detected</p>
+      )}
+    </div>
   );
 }
 
@@ -43,128 +66,127 @@ export default function SensorCard({ stype, timeRange }) {
   const [anomalyCount, setAnomalyCount] = useState(0);
   const [status, setStatus] = useState("loading");
 
-  // Fetch historical data when timeRange changes
   useEffect(() => {
+    setStatus("loading");
     const since = Math.floor(Date.now() / 1000) - timeRange;
     fetch(`${API_BASE}?type=${stype}&since=${since}`)
       .then((r) => r.json())
       .then((data) => {
-        const items = data.readings ?? [];
-        setReadings(
-          items.map((r) => ({
-            time: new Date(r.timestamp * 1000).toLocaleTimeString(),
-            mean: parseFloat(r.mean) || 0,
-            min: parseFloat(r.min) || 0,
-            max: parseFloat(r.max) || 0,
-            anomaly: r.anomaly ?? false,
-          })),
-        );
+        const items = (data.readings ?? []).map((r) => ({
+          time: new Date(r.timestamp * 1000).toLocaleTimeString(),
+          mean: parseFloat(r.mean) || 0,
+          min: parseFloat(r.min) || 0,
+          max: parseFloat(r.max) || 0,
+          anomaly: r.anomaly ?? false,
+          stype,
+        }));
+        setReadings(items);
         setAnomalyCount(items.filter((r) => r.anomaly).length);
         setStatus("live");
       })
       .catch(() => setStatus("error"));
   }, [stype, timeRange]);
 
-  // Live WebSocket updates
   useEffect(() => {
     const handler = (msg) => {
-      if (msg.type !== "reading") return;
+      if (msg.type !== "reading" || msg.payload.type !== stype) return;
       const r = msg.payload;
-      if (r.type !== stype) return;
-
       const point = {
         time: new Date(r.timestamp * 1000).toLocaleTimeString(),
         mean: r.mean ?? 0,
         min: r.min ?? 0,
         max: r.max ?? 0,
         anomaly: r.anomaly ?? false,
+        stype,
       };
-
-      setReadings((prev) => [...prev.slice(-99), point]); // keep last 100
+      setReadings((prev) => [...prev.slice(-99), point]);
       if (point.anomaly) setAnomalyCount((c) => c + 1);
     };
-
     onMessage(handler);
     return () => offMessage(handler);
   }, [stype]);
 
   const latest = readings[readings.length - 1];
+  const isAnomaly = latest?.anomaly ?? false;
 
   return (
-    <div className="bg-slate-800 rounded-xl p-5 border border-slate-700">
+    <div
+      className={`card transition-all duration-300 ${
+        isAnomaly ? "border-red-500/50 shadow-lg shadow-red-500/10" : ""
+      }`}
+    >
       {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center">
-          <h3 className="text-sky-400 text-xs font-bold uppercase tracking-widest">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">{ICONS[stype]}</span>
+          <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">
             {stype}
           </h3>
           <AnomalyBadge count={anomalyCount} />
         </div>
-        <span
-          className={`text-xs px-2 py-0.5 rounded-full ${
-            status === "live"
-              ? "bg-green-500/20 text-green-400"
-              : status === "error"
-                ? "bg-red-500/20 text-red-400"
-                : "bg-slate-600 text-slate-400"
-          }`}
-        >
-          {status === "live" ? "● live" : status}
-        </span>
+        <StatusPill status={status} />
       </div>
 
-      {/* Current value */}
+      {/* Current reading */}
       {latest ? (
-        <div className="mb-4">
-          <span
-            className={`text-3xl font-bold ${latest.anomaly ? "text-red-400" : "text-white"}`}
-          >
-            {latest.mean.toFixed(2)}
-          </span>
-          <span className="text-slate-400 text-sm ml-1">{UNITS[stype]}</span>
-          {latest.anomaly && (
-            <span className="ml-2 text-red-400 text-xs font-semibold animate-pulse">
-              ⚠ ANOMALY
+        <div className="mb-5">
+          <div className="flex items-baseline gap-1">
+            <span
+              className={`stat-value ${isAnomaly ? "text-red-400" : "text-white"}`}
+            >
+              {latest.mean.toFixed(2)}
             </span>
-          )}
-          <div className="text-slate-500 text-xs mt-1">
-            Min: {latest.min} · Max: {latest.max}
+            <span className="stat-unit">{UNITS[stype]}</span>
+            {isAnomaly && (
+              <span
+                className="ml-2 badge bg-red-500/10 text-red-400
+                               border border-red-500/30 animate-pulse-slow"
+              >
+                ANOMALY
+              </span>
+            )}
           </div>
+          <p className="stat-sub">
+            Min: {latest.min} &nbsp;·&nbsp; Max: {latest.max}
+          </p>
         </div>
       ) : (
-        <div className="text-slate-500 text-sm mb-4">Awaiting data…</div>
+        <div className="mb-5 h-10 flex items-center">
+          <p className="text-slate-600 text-sm">Awaiting data…</p>
+        </div>
       )}
 
       {/* Chart */}
-      <ResponsiveContainer width="100%" height={160}>
+      <ResponsiveContainer width="100%" height={150}>
         <LineChart
           data={readings}
-          margin={{ top: 5, right: 5, left: -20, bottom: 0 }}
+          margin={{ top: 4, right: 4, left: -28, bottom: 0 }}
         >
-          <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+          <CartesianGrid
+            strokeDasharray="3 3"
+            stroke="rgb(51 65 85)" // slate-700
+            vertical={false}
+          />
           <XAxis
             dataKey="time"
-            tick={{ fill: "#64748b", fontSize: 9 }}
+            tick={{ fill: "rgb(100 116 139)", fontSize: 9 }} // slate-500
             interval="preserveStartEnd"
+            tickLine={false}
+            axisLine={false}
           />
-          <YAxis tick={{ fill: "#64748b", fontSize: 9 }} />
-          <Tooltip
-            contentStyle={{
-              backgroundColor: "#1e293b",
-              border: "1px solid #334155",
-              borderRadius: "8px",
-              fontSize: "11px",
-            }}
-            labelStyle={{ color: "#94a3b8" }}
-            itemStyle={{ color: "#7dd3fc" }}
+          <YAxis
+            tick={{ fill: "rgb(100 116 139)", fontSize: 9 }}
+            tickLine={false}
+            axisLine={false}
           />
+          <Tooltip content={<CustomTooltip />} />
           <Line
             type="monotone"
             dataKey="mean"
-            stroke="#38bdf8"
+            stroke="rgb(56 189 248)" // brand-400 / sky-400
             strokeWidth={2}
             dot={<AnomalyDot />}
-            activeDot={{ r: 4 }}
+            activeDot={{ r: 4, fill: "rgb(56 189 248)" }}
             isAnimationActive={false}
           />
         </LineChart>

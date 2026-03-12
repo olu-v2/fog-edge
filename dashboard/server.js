@@ -20,7 +20,7 @@ app.use(
 app.use(express.static(DIST, { maxAge: "0" }));
 
 // SPA fallback — always return index.html for client-side routing
-app.get("*", (req, res) => {
+app.get("/", (req, res) => {
   console.log("Running");
   res.sendFile(path.join(DIST, "index.html"));
 });

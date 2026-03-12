@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "backend/dashboard/**"
+      - "dashboard/**"
       - "scripts/deploy-dashboard.js"
       - ".github/workflows/deploy-dashboard.yml"
 
@@ -76,7 +76,6 @@ jobs:
           AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           S3_BUCKET: ${{ secrets.S3_BUCKET_DASHBOARD }}
-          API_GATEWAY_URL: ${{ secrets.API_GATEWAY_URL }}
           PR_NUMBER: ${{ github.event.number }}
         run: node scripts/deploy-dashboard.js
 

@@ -7,6 +7,7 @@ import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 const broker = await Aedes.createBroker();
 const BROKER_PORT = 1883;
 const DISPATCH_RATE = 5000; // ms
+const rollingWindows = {};
 const AWS_REGION = "us-east-1";
 const SQS_QUEUE_URL =
   "https://sqs.us-east-1.amazonaws.com/320803145537/sensor-ingest-queue";
@@ -15,6 +16,26 @@ const TOPIC = "fog/ingest";
 
 const sqs = new SQSClient({ region: AWS_REGION });
 let buffer = [];
+
+function detectAnomaly(stype, value) {
+  if (!rollingWindows[stype]) rollingWindows[stype] = [];
+  const win = rollingWindows[stype];
+
+  if (win.length < 10) {
+    win.push(value);
+    return false; // not enough data yet
+  }
+
+  const mean = win.reduce((a, b) => a + b, 0) / win.length;
+  const std = Math.sqrt(
+    win.map((v) => (v - mean) ** 2).reduce((a, b) => a + b, 0) / win.length,
+  );
+
+  win.push(value);
+  if (win.length > 30) win.shift(); // keep rolling window at 30
+
+  return stf > 0 && Math.abs(value - mean) / std > 2.0;
+}
 
 // ── Validation ──────────────────────────────────────────
 const VALID_RANGES = {
@@ -58,15 +79,18 @@ const aggregate = (readings) => {
 
     const key = Object.keys(items[0].data)[0];
     const vals = items.map((i) => i.data[key]);
+    const meanVal = +mean(vals).toFixed(3);
+    const lastVal = items[items.length - 1].data[key];
     return {
       type: stype,
       count: vals.length,
-      mean: +mean(vals).toFixed(3),
+      mean: meanVal,
       min: Math.min(...vals),
       max: Math.max(...vals),
       latest: latest.data,
       timestamp: latest.timestamp,
-      sensor_ids: sensorIds,
+      sensor_ids: [...new Set(items.map((i) => i.sensor_id))],
+      anomaly: detectAnomaly(stype, lastVal),
     };
   });
 };

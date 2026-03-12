@@ -14,12 +14,12 @@ import {
   ApiGatewayV2Client,
   CreateApiCommand,
   GetApisCommand,
-  GetIntegrationsCommand,
-  GetRoutesCommand,
-  GetStagesCommand,
   CreateIntegrationCommand,
+  GetIntegrationsCommand,
   CreateRouteCommand,
+  GetRoutesCommand,
   CreateStageCommand,
+  GetStagesCommand,
 } from "@aws-sdk/client-apigatewayv2";
 import {
   SQSClient,
@@ -30,6 +30,8 @@ import {
   DynamoDBClient,
   CreateTableCommand,
   DescribeTableCommand,
+  waitUntilTableExists,
+  UpdateTimeToLiveCommand,
 } from "@aws-sdk/client-dynamodb";
 
 dotenv.config({ override: true });
@@ -91,6 +93,47 @@ async function ensureSQSQueue() {
     );
     console.log(`SQS queue created: ${res.QueueUrl}`);
     return res.QueueUrl;
+  }
+}
+
+async function ensureWSConnectionsTable() {
+  const TABLE = "FogStreamWSConnections";
+
+  try {
+    await dynamoClient.send(new DescribeTableCommand({ TableName: TABLE }));
+    console.log(`WS connections table exists: ${TABLE}`);
+  } catch {
+    console.log(`Creating WS connections table: ${TABLE}`);
+    await dynamoClient.send(
+      new CreateTableCommand({
+        TableName: TABLE,
+        AttributeDefinitions: [
+          { AttributeName: "connectionId", AttributeType: "S" },
+        ],
+        KeySchema: [{ AttributeName: "connectionId", KeyType: "HASH" }],
+        BillingMode: "PAY_PER_REQUEST",
+      }),
+    );
+
+    // Wait for table to be active before proceeding
+    console.log("Waiting for WS connections table to become active...");
+    await waitUntilTableExists(
+      { client: dynamoClient, maxWaitTime: 60 },
+      { TableName: TABLE },
+    );
+
+    // Enable TTL so stale connections auto-expire
+    await dynamoClient.send(
+      new UpdateTimeToLiveCommand({
+        TableName: TABLE,
+        TimeToLiveSpecification: {
+          Enabled: true,
+          AttributeName: "ttl",
+        },
+      }),
+    );
+
+    console.log(`WS connections table created with TTL: ${TABLE}`);
   }
 }
 
@@ -256,6 +299,79 @@ async function ensureApiGateway({ apiName, functionName }) {
   return api.ApiEndpoint;
 }
 
+async function ensureWebSocketApi(functionName) {
+  const apiName = `fogstream-ws-api-pr-${PR_ID}`;
+  const existing = await apiClient.send(new GetApisCommand({}));
+  let api = existing.Items?.find((a) => a.Name === apiName);
+
+  if (!api) {
+    console.log(`Creating WebSocket API: ${apiName}`);
+    api = await apiClient.send(
+      new CreateApiCommand({
+        Name: apiName,
+        ProtocolType: "WEBSOCKET", // ← key difference from HTTP API
+        RouteSelectionExpression: "$request.body.action",
+      }),
+    );
+  } else {
+    console.log(`WebSocket API exists: ${apiName}`);
+  }
+
+  // Integration
+  const integrations = await apiClient.send(
+    new GetIntegrationsCommand({ ApiId: api.ApiId }),
+  );
+  let integration = integrations.Items?.find((i) =>
+    i.IntegrationUri?.includes(functionName),
+  );
+  if (!integration) {
+    integration = await apiClient.send(
+      new CreateIntegrationCommand({
+        ApiId: api.ApiId,
+        IntegrationType: "AWS_PROXY",
+        IntegrationUri: `arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${functionName}`,
+        ContentHandlingStrategy: "CONVERT_TO_TEXT",
+        PassthroughBehavior: "WHEN_NO_MATCH",
+      }),
+    );
+  }
+
+  // Routes — $connect, $disconnect, $default
+  const routes = await apiClient.send(
+    new GetRoutesCommand({ ApiId: api.ApiId }),
+  );
+  const requiredRoutes = ["$connect", "$disconnect", "$default"];
+  for (const routeKey of requiredRoutes) {
+    if (!routes.Items?.find((r) => r.RouteKey === routeKey)) {
+      console.log(`Creating WS route: ${routeKey}`);
+      await apiClient.send(
+        new CreateRouteCommand({
+          ApiId: api.ApiId,
+          RouteKey: routeKey,
+          Target: `integrations/${integration.IntegrationId}`,
+        }),
+      );
+    }
+  }
+
+  // Stage
+  const stages = await apiClient.send(
+    new GetStagesCommand({ ApiId: api.ApiId }),
+  );
+  if (!stages.Items?.find((s) => s.StageName === "prod")) {
+    await apiClient.send(
+      new CreateStageCommand({
+        ApiId: api.ApiId,
+        StageName: "prod",
+        AutoDeploy: true,
+      }),
+    );
+  }
+
+  // WebSocket URL format is wss:// not https://
+  return `wss://${api.ApiId}.execute-api.${REGION}.amazonaws.com/prod`;
+}
+
 // ─── SQS → Lambda Event Source Mapping ──────────────────
 async function ensureSQSEventMapping(functionName, queueUrl) {
   const queueArn = queueUrl
@@ -290,14 +406,33 @@ async function ensureSQSEventMapping(functionName, queueUrl) {
 
 async function main() {
   await ensureDynamoTable();
+  await ensureWSConnectionsTable();
   const sqsQueueUrl = await ensureSQSQueue();
+
+  const wsName = `fogstream-ws-pr-${PR_ID}`;
+  await deployLambda({
+    functionName: wsName,
+    zipPath: "./ws-connect.zip",
+    handler: "ws-connect.handler",
+    envVars: {
+      WS_CONNECTIONS_TABLE: "FogStreamWSConnections",
+    },
+  });
+  const wsUrl = await ensureWebSocketApi(wsName);
+  console.log("WebSocket URL:", wsUrl);
 
   const ingestName = `fogstream-ingest-${PR_ID}`;
   await deployLambda({
     functionName: ingestName,
     zipPath: "./ingest.zip",
     handler: "ingest.handler",
-    envVars: { TABLE_NAME, SQS_QUEUE_URL: sqsQueueUrl },
+    envVars: {
+      TABLE_NAME,
+      SQS_QUEUE_URL: sqsQueueUrl,
+      WS_CONNECTIONS_TABLE: "FogStreamWSConnections",
+      WS_ENDPOINT: wsUrl.replace("wss://", "https://"),
+      SNS_TOPIC_ARN: process.env.SNS_TOPIC_ARN ?? "",
+    },
   });
   await ensureSQSEventMapping(ingestName, sqsQueueUrl);
   const ingestUrl = await ensureApiGateway({
@@ -322,6 +457,7 @@ async function main() {
   if (process.env.GITHUB_OUTPUT) {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `ingest_url=${ingestUrl}\n`);
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `query_url=${queryUrl}\n`);
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `ws_url=${wsUrl}\n`);
   }
 }
 

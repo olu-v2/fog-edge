@@ -374,7 +374,7 @@ async function ensureWebSocketApi(functionName) {
     {
       Action: "lambda:InvokeFunction",
       Principal: "apigateway.amazonaws.com",
-      StatementId: "WSApiGatewayInvoke",
+      StatementId: `WSApiGatewayInvoke-${PR_ID}`,
       SourceArn: wsApiArn,
     },
   ];

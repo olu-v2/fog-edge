@@ -300,7 +300,7 @@ async function ensureApiGateway({ apiName, functionName }) {
 }
 
 async function ensureWebSocketApi(functionName) {
-  const apiName = `fogstream-ws-api-pr-${PR_ID}`;
+  const apiName = `fogstream-ws-api-${PR_ID}`;
   const existing = await apiClient.send(new GetApisCommand({}));
   let api = existing.Items?.find((a) => a.Name === apiName);
 

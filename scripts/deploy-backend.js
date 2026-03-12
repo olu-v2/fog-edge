@@ -409,7 +409,7 @@ async function main() {
   await ensureWSConnectionsTable();
   const sqsQueueUrl = await ensureSQSQueue();
 
-  const wsName = `fogstream-ws-pr-${PR_ID}`;
+  const wsName = `fogstream-ws-${PR_ID}`;
   await deployLambda({
     functionName: wsName,
     zipPath: "./ws-connect.zip",

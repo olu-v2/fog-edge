@@ -49,7 +49,6 @@ async function ensureBucket() {
     await s3.send(
       new CreateBucketCommand({
         Bucket: BUCKET,
-        CreateBucketConfiguration: { LocationConstraint: REGION },
       }),
     );
     console.log("S3 bucket created.");

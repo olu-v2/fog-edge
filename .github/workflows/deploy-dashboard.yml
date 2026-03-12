@@ -1,0 +1,94 @@
+name: Deploy FogStream Dashboard
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "backend/dashboard/**"
+      - "scripts/deploy-dashboard.js"
+      - ".github/workflows/deploy-dashboard.yml"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  # test:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 1
+  #     - name: Set up Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 22
+  #         cache: 'yarn'
+  #     - name: Install dependencies
+  #       run: yarn install --frozen-lockfile
+  #     - name: Run Jest tests
+  #       run: yarn test --coverage
+  #     - name: Delete Jest Coverage Folder
+  #       run: rm -rf coverage
+
+  deploy:
+    runs-on: ubuntu-latest
+    # needs: test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # - name: Run ESLint
+      #   run: yarn lint
+
+      # - name: Security Audit
+      #   run: yarn audit --level high
+
+      - name: Create .env file
+        run: |
+          cat > .env << EOF
+          AWS_REGION=${{ secrets.AWS_REGION }}
+          AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
+          S3_BUCKET=${{ secrets.S3_BUCKET_DASHBOARD }}
+          API_GATEWAY_URL=${{ secrets.API_GATEWAY_URL }}
+          EOF
+
+      - name: Deploy Dashboard via AWS SDK
+        id: dashboard
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET_DASHBOARD }}
+          API_GATEWAY_URL: ${{ secrets.API_GATEWAY_URL }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: node scripts/deploy-dashboard.js
+
+      - name: Post PR Comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const dashboardUrl = `${{ steps.dashboard.outputs.dashboard_url }}`;
+            await github.rest.issues.createComment({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: context.issue.number,
+              body: `### 🌐 FogStream Dashboard Deployed\n\n| Resource | URL |\n|---|---|\n| Dashboard | [Open Dashboard](${dashboardUrl}) |`
+            });

@@ -1,0 +1,103 @@
+name: Deploy FogStream Backend
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "backend/lambda/**"
+      - "scripts/deploy-backend.js"
+      - ".github/workflows/deploy-backend.yml"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  # test:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 1
+  #     - name: Set up Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 22
+  #         cache: 'yarn'
+  #     - name: Install dependencies
+  #       run: yarn install --frozen-lockfile
+  #     - name: Run Jest tests
+  #       run: yarn test --coverage
+  #     - name: Delete Jest Coverage Folder
+  #       run: rm -rf coverage
+
+  deploy:
+    runs-on: ubuntu-latest
+    # needs: test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # - name: Run ESLint
+      #   run: yarn lint
+
+      # - name: Security Audit
+      #   run: yarn audit --level high
+
+      - name: Create .env file
+        run: |
+          cat > .env << EOF
+          AWS_REGION=${{ secrets.AWS_REGION }}
+          AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
+          LAMBDA_ROLE_ARN=${{ secrets.LAMBDA_ROLE_ARN }}
+          DYNAMO_TABLE=${{ secrets.DYNAMO_TABLE }}
+          SQS_QUEUE_URL=${{ secrets.SQS_QUEUE_URL }}
+          EOF
+
+      - name: Zip Lambda functions
+        run: |
+          zip -j ingest.zip backend/lambda/ingest.js package.json yarn.lock
+          zip -j query.zip  backend/lambda/query.js  package.json yarn.lock
+          echo "Lambda zips created"
+
+      - name: Deploy Lambdas via AWS SDK
+        id: lambda
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          LAMBDA_ROLE_ARN: ${{ secrets.LAMBDA_ROLE_ARN }}
+          LAMBDA_FUNCTION_NAME: pr-${{ github.event.number }}
+          DYNAMO_TABLE: ${{ secrets.DYNAMO_TABLE }}
+          SQS_QUEUE_URL: ${{ secrets.SQS_QUEUE_URL }}
+        run: node scripts/deploy-backend.js
+
+      - name: Post PR Comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const ingestUrl = `${{ steps.lambda.outputs.ingest_url }}`;
+            const queryUrl  = `${{ steps.lambda.outputs.query_url }}`;
+            await github.rest.issues.createComment({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: context.issue.number,
+              body: `### 🚀 FogStream Backend Deployed\n\n| Lambda | API Gateway URL |\n|---|---|\n| \`sensor-ingest\` | \`${ingestUrl}\` |\n| \`sensor-query\` | [${queryUrl}](${queryUrl}?type=temperature) |`
+            });

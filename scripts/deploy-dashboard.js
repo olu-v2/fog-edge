@@ -9,20 +9,36 @@ import {
   PutBucketPolicyCommand,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
+import {
+  ApiGatewayV2Client,
+  GetApisCommand,
+} from "@aws-sdk/client-apigatewayv2";
 
 dotenv.config({ override: true });
 
 const REGION = process.env.AWS_REGION || "us-east-1";
 const PR_NUMBER = process.env.PR_NUMBER;
 const BASE_BUCKET = process.env.S3_BUCKET;
-const API_URL = process.env.API_GATEWAY_URL;
 
 // Each PR gets its own bucket prefix: fogstream-dashboard-pr-42
 const BUCKET = `${BASE_BUCKET}-pr-${PR_NUMBER}`;
 
 const s3 = new S3Client({ region: REGION });
+const apiClient = new ApiGatewayV2Client({ region: REGION });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+async function getQueryApiUrl() {
+  const apiName = `fogstream-query-api-pr-${PR_NUMBER}`;
+  const existing = await apiClient.send(new GetApisCommand({}));
+  const api = existing.Items?.find((a) => a.Name === apiName);
+
+  if (!api)
+    throw new Error(`Query API not found: ${apiName}. Deploy backend first.`);
+
+  console.log(`Found Query API: ${api.ApiEndpoint}`);
+  return api.ApiEndpoint;
+}
 
 async function ensureBucket() {
   try {
@@ -74,7 +90,7 @@ async function setPublicPolicy() {
   console.log("Public read policy applied.");
 }
 
-async function uploadDashboard() {
+async function uploadDashboard(apiUrl) {
   const dashboardDir = path.resolve("backend/dashboard");
   const files = fs.readdirSync(dashboardDir);
 
@@ -86,7 +102,7 @@ async function uploadDashboard() {
     if (file === "index.html") {
       content = content.replace(
         /https:\/\/<API_ID>\.execute-api\.[^"]+/g,
-        API_URL,
+        apiUrl,
       );
       console.log(`API URL injected into ${file}`);
     }
@@ -115,10 +131,11 @@ async function uploadDashboard() {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
+  const API_URL = await getQueryApiUrl();
   await ensureBucket();
   await enableStaticHosting();
   await setPublicPolicy();
-  await uploadDashboard();
+  await uploadDashboard(API_URL);
 
   const dashboardUrl = `http://${BUCKET}.s3-website-${REGION}.amazonaws.com`;
   console.log("Dashboard URL:", dashboardUrl);

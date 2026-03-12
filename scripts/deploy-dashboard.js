@@ -25,7 +25,7 @@ import archiver from "archiver";
 
 dotenv.config({ override: true });
 
-const REGION = process.env.AWS_REGION || "eu-west-1";
+const REGION = process.env.AWS_REGION || "us-east-1";
 const ACCOUNT_ID = process.env.AWS_ACCOUNT_ID;
 const ROLE_ARN = process.env.LAMBDA_ROLE_ARN;
 const PR_NUMBER = process.env.PR_NUMBER;

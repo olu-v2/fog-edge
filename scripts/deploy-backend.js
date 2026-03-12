@@ -441,7 +441,7 @@ async function main() {
   const wsName = `fogstream-ws-${PR_ID}`;
   await deployLambda({
     functionName: wsName,
-    zipPath: "./ws-connect.zip",
+    zipPath: "./wsConnect.zip",
     handler: "wsConnect.handler",
     envVars: {
       WS_CONNECTIONS_TABLE: "FogStreamWSConnections",

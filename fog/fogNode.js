@@ -34,7 +34,7 @@ function detectAnomaly(stype, value) {
   win.push(value);
   if (win.length > 30) win.shift(); // keep rolling window at 30
 
-  return stf > 0 && Math.abs(value - mean) / std > 2.0;
+  return std > 0 && Math.abs(value - mean) / std > 2.0;
 }
 
 // ── Validation ──────────────────────────────────────────

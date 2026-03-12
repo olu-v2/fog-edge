@@ -442,7 +442,7 @@ async function main() {
   await deployLambda({
     functionName: wsName,
     zipPath: "./ws-connect.zip",
-    handler: "ws-connect.handler",
+    handler: "wsConnect.handler",
     envVars: {
       WS_CONNECTIONS_TABLE: "FogStreamWSConnections",
     },

@@ -72,6 +72,7 @@ jobs:
         run: |
           zip -j ingest.zip backend/lambda/ingest.js package.json yarn.lock
           zip -j query.zip  backend/lambda/query.js  package.json yarn.lock
+          zip -j ws-connect.zip backend/lambda/wsConnect.js package.json yarn.lock
           echo "Lambda zips created"
 
       - name: Deploy Lambdas via AWS SDK

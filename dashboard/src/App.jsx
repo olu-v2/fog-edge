@@ -3,7 +3,7 @@ import SensorCard from "./components/SensorCard.jsx";
 import TimeRangeSelector from "./components/TimeRangeSelector.jsx";
 import StatusPill from "./components/StatusPill.jsx";
 import PlantHealthScore from "./components/PlantHealthScore.jsx";
-import { connectWS, onMessage, offMessage } from "./ws.js";
+import { connectWS, onMessage, offMessage, disconnectWS } from "./ws.js";
 
 const SENSOR_TYPES = [
   "air_temperature",
@@ -27,7 +27,7 @@ export default function App() {
     ws.onopen = () => setWsStatus("connected");
     ws.onclose = () => setWsStatus("disconnected");
     ws.onerror = () => setWsStatus("error");
-    return () => ws?.close();
+    return () => disconnectWS();
   }, []);
 
   // Collect latest reading per sensor type for the health score

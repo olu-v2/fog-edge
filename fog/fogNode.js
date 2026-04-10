@@ -11,14 +11,14 @@ const AWS_REGION = "us-east-1";
 const SQS_QUEUE_URL =
   "https://sqs.us-east-1.amazonaws.com/320803145537/sensor-ingest-queue";
 const TOPIC_INGEST = "fog/ingest";
-const TOPIC_ALERTS = "fog/alerts"; // ← new: actuator alert topic
+const TOPIC_ALERTS = "fog/alerts";
 
 const sqs = new SQSClient({ region: AWS_REGION });
 let buffer = [];
 
-// ── EMA State ───────────────────────────────────────────────────────────────
-const EMA_ALPHA = 0.3; // 0 = very smooth, 1 = no smoothing
-const emaState = {}; // { [sensorType]: currentEMA }
+// ── EMA ─────────────────────────────────────────────────────────────────────
+const EMA_ALPHA = 0.3;
+const emaState = {};
 
 function updateEMA(type, value) {
   emaState[type] =
@@ -28,7 +28,7 @@ function updateEMA(type, value) {
   return emaState[type];
 }
 
-// ── Z-score Anomaly Detection (fixed + extended to all sensors) ─────────────
+// ── Z-score Anomaly Detection ────────────────────────────────────────────────
 const rollingWindows = {};
 
 function detectAnomaly(stype, value) {
@@ -37,7 +37,7 @@ function detectAnomaly(stype, value) {
 
   if (win.length < 10) {
     win.push(value);
-    return false; // ← BUG FIX: closing brace was missing
+    return false;
   }
 
   const mean = win.reduce((a, b) => a + b, 0) / win.length;
@@ -50,7 +50,6 @@ function detectAnomaly(stype, value) {
 
   return std > 0 && Math.abs(value - mean) / std > 2.0;
 }
-
 // ── Fog-level Alert Thresholds ───────────────────────────────────────────────
 const ALERT_THRESHOLDS = {
   air_temperature: { min: 10, max: 38 },
@@ -101,14 +100,14 @@ const validate = (payload) => {
     return rule.axes.every(({ key, min, max }) => {
       const val = payload.data[key];
       return val !== undefined && val >= min && val <= max;
-    }); // ← BUG FIX: closing brace was missing
+    });
   }
 
   const val = payload.data[rule.key];
   return val !== undefined && val >= rule.min && val <= rule.max;
 };
 
-// ── Aggregation (with EMA smoothing + anomaly + location) ───────────────────
+// ── Aggregation ──────────────────────────────────────────────────────────────
 const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
 
 const aggregate = (readings) => {
@@ -122,7 +121,7 @@ const aggregate = (readings) => {
     const sensorIds = [...new Set(items.map((i) => i.sensor_id))];
     const locations = [
       ...new Set(items.map((i) => i.location).filter(Boolean)),
-    ]; // ← new
+    ];
 
     const key = Object.keys(items[0].data)[0];
     const vals = items.map((i) => i.data[key]);
@@ -132,15 +131,15 @@ const aggregate = (readings) => {
     return {
       type: stype,
       count: vals.length,
-      mean: updateEMA(stype, rawMean), // ← EMA-smoothed mean
-      raw_mean: +rawMean.toFixed(3), // ← raw mean kept for reference
+      mean: updateEMA(stype, rawMean),
+      raw_mean: +rawMean.toFixed(3),
       min: Math.min(...vals),
       max: Math.max(...vals),
-      anomaly: detectAnomaly(stype, lastVal), // ← Z-score for all sensors
+      anomaly: detectAnomaly(stype, lastVal),
       latest: latest.data,
       timestamp: latest.timestamp,
       sensor_ids: sensorIds,
-      locations, // ← zone info carried through
+      locations,
     };
   });
 };
@@ -157,8 +156,8 @@ const dispatchToCloud = async () => {
 
   if (valid.length === 0) {
     console.log("[FOG] No valid readings — skipping dispatch");
-    return; // ← BUG FIX: closing brace was missing
-  }
+    return;
+  } // ← fix 7: was missing
 
   const payload = {
     fog_node_id: "fog-node-01",
@@ -183,18 +182,15 @@ const dispatchToCloud = async () => {
   }
 };
 
-// ── Embedded MQTT Broker (aedes) ─────────────────────────────────────────────
+// ── Embedded MQTT Broker ─────────────────────────────────────────────────────
 const server = net.createServer(broker.handle);
 
 server.listen(BROKER_PORT, () => {
   console.log(`[FOG] MQTT Broker listening on port ${BROKER_PORT}`);
 
-  // ── Subscriber ─────────────────────────────────────────────────────────
   const subscriber = mqtt.connect(`mqtt://localhost:${BROKER_PORT}`, {
     clientId: "fog-subscriber",
   });
-
-  // ── Alert Publisher (separate client for clean separation) ─────────────
   const alertPublisher = mqtt.connect(`mqtt://localhost:${BROKER_PORT}`, {
     clientId: "fog-alert-publisher",
   });
@@ -208,7 +204,7 @@ server.listen(BROKER_PORT, () => {
     try {
       const payload = JSON.parse(message.toString());
       buffer.push(payload);
-      checkAndAlert(payload, alertPublisher); // ← fog-level alert, no cloud needed
+      checkAndAlert(payload, alertPublisher);
       console.log(
         `[FOG] Buffered: ${payload.type} from ${payload.sensor_id} (${payload.location ?? "no-zone"})`,
       );
@@ -217,7 +213,6 @@ server.listen(BROKER_PORT, () => {
     }
   });
 
-  // ── Dispatch Timer ─────────────────────────────────────────────────────
   setInterval(dispatchToCloud, DISPATCH_RATE);
 });
 

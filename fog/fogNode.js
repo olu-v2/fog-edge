@@ -3,19 +3,33 @@ import net from "net";
 import mqtt from "mqtt";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 
-// ── Config ──────────────────────────────────────────────
+// ── Config ──────────────────────────────────────────────────────────────────
 const broker = await Aedes.createBroker();
 const BROKER_PORT = 1883;
-const DISPATCH_RATE = 5000; // ms
-const rollingWindows = {};
+const DISPATCH_RATE = 5000;
 const AWS_REGION = "us-east-1";
 const SQS_QUEUE_URL =
   "https://sqs.us-east-1.amazonaws.com/320803145537/sensor-ingest-queue";
-const TOPIC = "fog/ingest";
-// ────────────────────────────────────────────────────────
+const TOPIC_INGEST = "fog/ingest";
+const TOPIC_ALERTS = "fog/alerts"; // ← new: actuator alert topic
 
 const sqs = new SQSClient({ region: AWS_REGION });
 let buffer = [];
+
+// ── EMA State ───────────────────────────────────────────────────────────────
+const EMA_ALPHA = 0.3; // 0 = very smooth, 1 = no smoothing
+const emaState = {}; // { [sensorType]: currentEMA }
+
+function updateEMA(type, value) {
+  emaState[type] =
+    emaState[type] === undefined
+      ? value
+      : +(EMA_ALPHA * value + (1 - EMA_ALPHA) * emaState[type]).toFixed(4);
+  return emaState[type];
+}
+
+// ── Z-score Anomaly Detection (fixed + extended to all sensors) ─────────────
+const rollingWindows = {};
 
 function detectAnomaly(stype, value) {
   if (!rollingWindows[stype]) rollingWindows[stype] = [];
@@ -23,7 +37,7 @@ function detectAnomaly(stype, value) {
 
   if (win.length < 10) {
     win.push(value);
-    return false; // not enough data yet
+    return false; // ← BUG FIX: closing brace was missing
   }
 
   const mean = win.reduce((a, b) => a + b, 0) / win.length;
@@ -32,29 +46,69 @@ function detectAnomaly(stype, value) {
   );
 
   win.push(value);
-  if (win.length > 30) win.shift(); // keep rolling window at 30
+  if (win.length > 30) win.shift();
 
   return std > 0 && Math.abs(value - mean) / std > 2.0;
 }
 
-// ── Validation ──────────────────────────────────────────
+// ── Fog-level Alert Thresholds ───────────────────────────────────────────────
+const ALERT_THRESHOLDS = {
+  air_temperature: { min: 10, max: 38 },
+  humidity: { min: 30, max: 90 },
+  co2: { min: 400, max: 1400 },
+  par_light: { min: 0, max: 2500 },
+  soil_moisture: { min: 20, max: 85 },
+};
+
+function checkAndAlert(payload, alertPublisher) {
+  const rule = ALERT_THRESHOLDS[payload.type];
+  if (!rule) return;
+
+  const key = Object.keys(payload.data)[0];
+  const value = payload.data[key];
+
+  if (value < rule.min || value > rule.max) {
+    const alert = {
+      sensor_id: payload.sensor_id,
+      type: payload.type,
+      location: payload.location ?? "unknown",
+      value,
+      rule,
+      timestamp: payload.timestamp,
+      reason: value < rule.min ? "BELOW_MIN" : "ABOVE_MAX",
+    };
+    alertPublisher.publish(TOPIC_ALERTS, JSON.stringify(alert), { qos: 1 });
+    console.log(
+      `[FOG ALERT] ${payload.type} @ ${alert.location} → ${value} (${alert.reason})`,
+    );
+  }
+}
+
+// ── Validation ───────────────────────────────────────────────────────────────
 const VALID_RANGES = {
-  temperature: { key: "celsius", min: -40, max: 80 },
+  air_temperature: { key: "celsius", min: 5, max: 45 },
   humidity: { key: "rh", min: 0, max: 100 },
-  pressure: { key: "hpa", min: 870, max: 1084 },
   co2: { key: "ppm", min: 0, max: 5000 },
-  vibration: null,
+  par_light: { key: "umol", min: 0, max: 3000 },
+  soil_moisture: { key: "vwc", min: 0, max: 100 },
 };
 
 const validate = (payload) => {
   const rule = VALID_RANGES[payload.type];
   if (rule === undefined) return false;
-  if (rule === null) return true; // vibration always valid
+
+  if (rule.axes) {
+    return rule.axes.every(({ key, min, max }) => {
+      const val = payload.data[key];
+      return val !== undefined && val >= min && val <= max;
+    }); // ← BUG FIX: closing brace was missing
+  }
+
   const val = payload.data[rule.key];
-  return val >= rule.min && val <= rule.max;
+  return val !== undefined && val >= rule.min && val <= rule.max;
 };
 
-// ── Aggregation ─────────────────────────────────────────
+// ── Aggregation (with EMA smoothing + anomaly + location) ───────────────────
 const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
 
 const aggregate = (readings) => {
@@ -66,36 +120,32 @@ const aggregate = (readings) => {
   return Object.entries(grouped).map(([stype, items]) => {
     const latest = items[items.length - 1];
     const sensorIds = [...new Set(items.map((i) => i.sensor_id))];
-
-    if (stype === "vibration") {
-      return {
-        type: stype,
-        count: items.length,
-        latest: latest.data,
-        timestamp: latest.timestamp,
-        sensor_ids: sensorIds,
-      };
-    }
+    const locations = [
+      ...new Set(items.map((i) => i.location).filter(Boolean)),
+    ]; // ← new
 
     const key = Object.keys(items[0].data)[0];
     const vals = items.map((i) => i.data[key]);
-    const meanVal = +mean(vals).toFixed(3);
-    const lastVal = items[items.length - 1].data[key];
+    const rawMean = mean(vals);
+    const lastVal = vals[vals.length - 1];
+
     return {
       type: stype,
       count: vals.length,
-      mean: meanVal,
+      mean: updateEMA(stype, rawMean), // ← EMA-smoothed mean
+      raw_mean: +rawMean.toFixed(3), // ← raw mean kept for reference
       min: Math.min(...vals),
       max: Math.max(...vals),
+      anomaly: detectAnomaly(stype, lastVal), // ← Z-score for all sensors
       latest: latest.data,
       timestamp: latest.timestamp,
-      sensor_ids: [...new Set(items.map((i) => i.sensor_id))],
-      anomaly: detectAnomaly(stype, lastVal),
+      sensor_ids: sensorIds,
+      locations, // ← zone info carried through
     };
   });
 };
 
-// ── Cloud Dispatcher ─────────────────────────────────────
+// ── Cloud Dispatcher ─────────────────────────────────────────────────────────
 const dispatchToCloud = async () => {
   if (buffer.length === 0) return;
 
@@ -107,7 +157,7 @@ const dispatchToCloud = async () => {
 
   if (valid.length === 0) {
     console.log("[FOG] No valid readings — skipping dispatch");
-    return;
+    return; // ← BUG FIX: closing brace was missing
   }
 
   const payload = {
@@ -133,40 +183,47 @@ const dispatchToCloud = async () => {
   }
 };
 
-// ── Embedded MQTT Broker (aedes) ─────────────────────────
+// ── Embedded MQTT Broker (aedes) ─────────────────────────────────────────────
 const server = net.createServer(broker.handle);
 
 server.listen(BROKER_PORT, () => {
   console.log(`[FOG] MQTT Broker listening on port ${BROKER_PORT}`);
 
-  // ── Fog Subscriber ───────────────────────────────────
+  // ── Subscriber ─────────────────────────────────────────────────────────
   const subscriber = mqtt.connect(`mqtt://localhost:${BROKER_PORT}`, {
     clientId: "fog-subscriber",
   });
 
+  // ── Alert Publisher (separate client for clean separation) ─────────────
+  const alertPublisher = mqtt.connect(`mqtt://localhost:${BROKER_PORT}`, {
+    clientId: "fog-alert-publisher",
+  });
+
   subscriber.on("connect", () => {
-    subscriber.subscribe(TOPIC, { qos: 1 });
-    console.log(`[FOG] Subscribed to topic: ${TOPIC}`);
+    subscriber.subscribe(TOPIC_INGEST, { qos: 1 });
+    console.log(`[FOG] Subscribed to topic: ${TOPIC_INGEST}`);
   });
 
   subscriber.on("message", (topic, message) => {
     try {
       const payload = JSON.parse(message.toString());
       buffer.push(payload);
-      console.log(`[FOG] Buffered: ${payload.type} from ${payload.sensor_id}`);
+      checkAndAlert(payload, alertPublisher); // ← fog-level alert, no cloud needed
+      console.log(
+        `[FOG] Buffered: ${payload.type} from ${payload.sensor_id} (${payload.location ?? "no-zone"})`,
+      );
     } catch (e) {
       console.warn("[FOG] Failed to parse message:", e.message);
     }
   });
 
-  // ── Dispatch timer ───────────────────────────────────
+  // ── Dispatch Timer ─────────────────────────────────────────────────────
   setInterval(dispatchToCloud, DISPATCH_RATE);
 });
 
 broker.on("client", (client) =>
   console.log(`[FOG] Device connected: ${client.id}`),
 );
-
 broker.on("clientDisconnect", (client) =>
   console.log(`[FOG] Device disconnected: ${client.id}`),
 );

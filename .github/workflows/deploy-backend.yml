@@ -66,6 +66,7 @@ jobs:
           LAMBDA_ROLE_ARN=${{ secrets.LAMBDA_ROLE_ARN }}
           DYNAMO_TABLE=${{ secrets.DYNAMO_TABLE }}
           SQS_QUEUE_URL=${{ secrets.SQS_QUEUE_URL }}
+          SNS_TOPIC_ARN=${{ secrets.SNS_TOPIC_ARN }}
           EOF
 
       - name: Zip Lambda functions
@@ -87,6 +88,7 @@ jobs:
           LAMBDA_FUNCTION_NAME: pr-${{ github.event.number }}
           DYNAMO_TABLE: ${{ secrets.DYNAMO_TABLE }}
           SQS_QUEUE_URL: ${{ secrets.SQS_QUEUE_URL }}
+          SNS_TOPIC_ARN: ${{ secrets.SNS_TOPIC_ARN }}
         run: node scripts/deploy-backend.js
 
       - name: Post PR Comment

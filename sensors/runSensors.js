@@ -1,10 +1,10 @@
 import mqtt from "mqtt";
 import {
-  TemperatureSensor,
+  AirTemperatureSensor,
   HumiditySensor,
-  PressureSensor,
   CO2Sensor,
-  VibrationSensor,
+  PARLightSensor,
+  SoilMoistureSensor,
 } from "./sensors.js";
 
 const BROKER_URL = "mqtt://localhost:1883";
@@ -16,11 +16,25 @@ client.on("connect", () => {
   console.log("[SENSORS] Connected to fog broker");
 
   const sensors = [
-    new TemperatureSensor("temp-01", 1.0),
-    new HumiditySensor("hum-01", 0.5),
-    new PressureSensor("pres-01", 0.2),
-    new CO2Sensor("co2-01", 0.1),
-    new VibrationSensor("vib-01", 2.0),
+    new AirTemperatureSensor("temp-gh-01", 1.0, {
+      location: "Zone A",
+      firmware: "1.2.0",
+    }),
+    new HumiditySensor("hum-gh-01", 0.5, {
+      location: "Zone A",
+      firmware: "1.1.3",
+    }),
+    new CO2Sensor("co2-gh-01", 0.2, { location: "Zone B", firmware: "1.0.8" }),
+    new PARLightSensor("par-gh-01", 0.5, {
+      location: "Zone B",
+      firmware: "1.3.1",
+    }),
+    new SoilMoistureSensor("soil-gh-01", 0.1, {
+      location: "Zone C",
+      firmware: "1.0.5",
+      dropoutRate: 0.05,
+      spikeRate: 0.02,
+    }),
   ];
 
   const dispatch = (payload) => {

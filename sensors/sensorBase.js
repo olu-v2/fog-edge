@@ -3,13 +3,20 @@ export class BaseSensor {
     sensorId,
     sensorType,
     frequencyHz = 1.0,
-    { dropoutRate = 0.02, spikeRate = 0.01 } = {},
+    {
+      dropoutRate = 0.02,
+      spikeRate = 0.01,
+      location = "Zone A", // ← new
+      firmware = "1.0.0", // ← new
+    } = {},
   ) {
     this.sensorId = sensorId;
     this.sensorType = sensorType;
     this.frequencyHz = frequencyHz;
     this.dropoutRate = dropoutRate;
     this.spikeRate = spikeRate;
+    this.location = location; // ← new
+    this.firmwareVersion = firmware; // ← new
     this._timer = null;
   }
 
@@ -28,6 +35,7 @@ export class BaseSensor {
 
       const data = this.generate();
 
+      // Simulate spike
       if (Math.random() < this.spikeRate) {
         const key = Object.keys(data)[0];
         data[key] = +(data[key] * 10).toFixed(2);
@@ -35,10 +43,13 @@ export class BaseSensor {
           `[SENSOR] ${this.sensorId} spike injected → ${key}: ${data[key]}`,
         );
       }
+
       callback({
         sensor_id: this.sensorId,
         type: this.sensorType,
         timestamp: Date.now() / 1000,
+        location: this.location, // ← new
+        firmware_version: this.firmwareVersion, // ← new
         data,
       });
     }, intervalMs);

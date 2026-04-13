@@ -112,7 +112,9 @@ const mean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
 
 const aggregate = (readings) => {
   const grouped = readings.reduce((acc, r) => {
-    (acc[r.type] = acc[r.type] || []).push(r);
+    const key = `${r.type}#${r.location}`;
+    acc[key] = acc[key] || [];
+    acc[key].push(r);
     return acc;
   }, {});
 

@@ -79,7 +79,7 @@ export const handler = async (event) => {
         new PutCommand({
           TableName: TABLE,
           Item: {
-            pk: `${fogId}#${reading.type}`,
+            pk: `${fogNodeId}#${reading.type}#${reading.location}`,
             timestamp: Math.floor(reading.timestamp),
             type: reading.type,
             fog_node: fogId,
